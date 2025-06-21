@@ -1,1 +1,392 @@
+# Flight_delay_prediction
+#import libraries
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+import glob
+import warnings
+warnings.filterwarnings("ignore")
 
+# List of CSV files (in this case, we specify the path to the files)
+csv_files = ['Flights_2022_7.csv','Flights_2022_1.csv','Flights_2022_4.csv']
+
+# Combine all CSV files into a single DataFrame
+combined_df = pd.concat([pd.read_csv(f) for f in csv_files], ignore_index=True)
+
+# Save the combined DataFrame to a new CSV file
+combined_df.to_csv('combined_output.csv', index=False)
+df=combined_df
+
+# Display the first 10 rows
+df.head(10)
+
+
+# code to get directory to input csv files
+import os
+print(os.getcwd())
+
+# Dropping Columns
+missing_percent = (df.isnull().sum() / len(df)) * 100
+columns_to_drop = missing_percent[missing_percent > 50].index
+df.drop(columns=columns_to_drop, inplace=True)
+
+print(df.columns)
+
+df['ArrDelay'].head()
+
+# remove rows where DepDelay is missing
+df.dropna(subset=['ArrDelay'], inplace=True)
+
+# Identify missing values in each column
+df.isnull().sum()
+
+# preprocess airlines
+df['airlines_list'] = df['Operating_Airline '].astype(str)
+df['airlines_list'].value_counts()
+
+# distance Normalization
+distance_min = df['Distance'].min()
+distance_max = df['Distance'].max()
+df['distance_scaled'] = (df['Distance'] - distance_min) / (distance_max - distance_min)
+
+def categorize_season(month):
+    if month in [12, 1, 2]:
+        return 'Winter'
+    elif month in [3, 4, 5]:
+        return 'Spring'
+    elif month in [6, 7, 8]:
+        return 'Summer'
+    elif month in [9, 10, 11]:
+        return 'Fall'
+    else:
+        return 'Unknown'
+
+# Apply the function to create the new 'Season' column
+df['Season'] = df['Month'].apply(categorize_season)
+df['Season'].value_counts()
+
+df['tails_list'] = df['Tail_Number'].astype(str)
+df['tails_list'].value_counts()
+
+def categorize_time(hour):
+    if 5 <= hour < 12:
+        return 'Morning'
+    elif 12 <= hour < 17:
+        return 'Afternoon'
+    elif 17 <= hour < 21:
+        return 'Evening'
+    else:
+        return 'Night'
+
+df['TimeOfDay'] = df['CRSDepTime'].apply(categorize_time)
+
+
+df['Delay'] = (df['ArrDelay'] > 0).astype(int)
+
+df['Delay'].head()
+
+delay_counts = df.groupby('TimeOfDay')['Delay'].mean()
+
+plt.figure(figsize=(10, 6))
+delay_counts.plot(kind='bar', color='blue', edgecolor='black')
+
+plt.xlabel('Time of Day', fontsize=12)
+plt.ylabel('Proportion of Delayed Flights', fontsize=12)
+plt.title('Flight Delays by Time of Day', fontsize=14)
+plt.xticks(rotation=0, ha='center', fontsize=10)
+plt.ylim(0, 1)
+
+plt.show()
+
+
+# Calculate delay rate per airline
+delay_rates = df.groupby('airlines_list')['Delay'].mean().sort_values(ascending=False)
+
+# Plot the delay rates
+plt.figure(figsize=(12, 6))
+delay_rates.plot(kind='bar', color='red', edgecolor='black')
+
+# Customize labels and title
+plt.xlabel('Airlines', fontsize=12)
+plt.ylabel('Average Delay Rate', fontsize=12)
+plt.title('Average Delay Rate by Airline', fontsize=14)
+plt.xticks(rotation=45, ha='right', fontsize=10)
+plt.grid(axis='y', linestyle='--', alpha=0.7)
+
+plt.show()
+
+
+# Group by  and calculate average delay
+airport_delay = df.groupby('tails_list')['Delay'].mean().sort_values(ascending=False)
+
+# Plot the average delay by airport
+plt.figure(figsize=(12, 6))
+airport_delay.plot(kind='bar', color='blue', edgecolor='black')
+
+# Customize labels and title
+plt.xlabel('Airports', fontsize=12)
+plt.ylabel('Average Delay (minutes)', fontsize=12)
+plt.title('Average Delay by Airport', fontsize=14)
+plt.xticks(rotation=45, ha='right', fontsize=10)
+plt.grid(axis='y', linestyle='--', alpha=0.7)
+
+plt.show()
+
+
+# Group by season
+weather_delay = df.groupby('Season')['Delay'].mean().sort_values(ascending=False)
+
+# Plot the delay rates for each weather condition
+plt.figure(figsize=(10,6)) 
+weather_delay.plot(kind='bar', color='skyblue', edgecolor='black')
+
+# Customize labels and title
+plt.xlabel('Weather Condition')
+plt.ylabel('Average Delay (minutes)', fontsize=12)
+plt.title('Average Delay by Weather Condition', fontsize=14)
+plt.xticks(rotation=45, ha='right', fontsize=10)
+plt.grid(axis='y', linestyle='--', alpha=0.7)
+
+# Show the plot
+plt.tight_layout() 
+plt.show()
+
+#Future strategy is to create the features:time of day, average delay by airline,average delay by airport, weather conditions.
+#Then we will split the data and implement logistic regression. After that point we will experiment with tree-based models and evaluate with ROC and AUC curves
+#Lastly we will visualise patterns and predictions with dashboards
+
+# Import necessary libraries
+!pip install scikit-learn
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+from sklearn.model_selection import train_test_split
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import accuracy_score
+from sklearn.metrics import confusion_matrix, recall_score, precision_score, roc_auc_score
+from sklearn.tree import DecisionTreeClassifier
+%matplotlib inline
+
+# Display the number of unique values in each selected categorical column (for encoding decisions)
+X = df[['airlines_list','Season','TimeOfDay','tails_list']]
+for col in X:
+    print(f"{col}: {X[col].nunique()} unique values")
+
+categorical_cols = ['airlines_list','Season','TimeOfDay']
+# One-hot encode the categorical columns from the original dataset
+X_encoded = pd.get_dummies(df[categorical_cols], drop_first=True)
+
+# Concatenate the encoded categorical columns with the numeric column from the original dataset
+X = pd.concat([X_encoded, df['distance_scaled']], axis=1)
+
+# Assign target variable y from original dataset
+y = df['Delay']  # or your actual target column name
+
+# Split the data into train and test sets, with 70% as training size
+# Stratify it based on the class labels with a random state 66
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=66, stratify=y)
+
+# Create a logistic regression model, with random state=5
+lreg = LogisticRegression(random_state=5, max_iter=20000)
+
+
+# Fit the model using the training set
+lreg.fit(X_train, y_train)
+
+# logistic regression prediction
+y_pred = lreg.predict(X_test)
+
+# evaluation scores to analyze logistic regression’s performance.
+conf_matrix = confusion_matrix(y_test, y_pred)
+accuracy = accuracy_score(y_test, y_pred)
+recall = recall_score(y_test, y_pred)
+precision = precision_score(y_test, y_pred)
+roc_auc = roc_auc_score(y_test, y_pred)
+log_df = pd.DataFrame({'Logistic Regression': [accuracy, recall, precision, roc_auc]}, index=['Accuracy', 'Recall', 'Precision', 'ROC AUC'])
+
+# fit data into decision tree for classification
+dt_model = DecisionTreeClassifier()
+dt_model.fit(X_train, y_train)
+
+# predict for decision tree classification
+y_pred_dt = dt_model.predict(X_test)
+
+# evaluation scores to analyze the decision tree’s performance.
+conf_matrix_dt = confusion_matrix(y_test, y_pred_dt)
+accuracy_dt = accuracy_score(y_test, y_pred_dt)
+recall_dt = recall_score(y_test, y_pred_dt)
+precision_dt = precision_score(y_test, y_pred_dt)
+roc_auc_dt = roc_auc_score(y_test, y_pred_dt)
+dtree_df = pd.DataFrame({'Decision Tree': [accuracy_dt, recall_dt, precision_dt, roc_auc_dt]}, index=['Accuracy', 'Recall', 'Precision', 'ROC AUC'])
+
+# merged data of evaluation metrics
+merged_df = pd.concat([log_df, dtree_df], axis=1)
+display(merged_df)
+
+# alighned for better comparison
+import pandas as pd
+log_metrics = {'Accuracy': 0.62755, 'Recall': 0.065382, 'Precision': 0.517698, 'ROC AUC': 0.514486}
+dt_metrics = {'Accuracy': 0.643564, 'Recall': 0.231488, 'Precision': 0.556861, 'ROC AUC': 0.560687}
+comparison_df = pd.DataFrame({'Metric': list(log_metrics.keys()), 'Logistic Regression': list(log_metrics.values()), 'Decision Tree': list(dt_metrics.values())})
+print(comparison_df)
+
+# Accuracy: Decision Tree (64.36%) slightly outperforms Logistic Regression (62.76%) in overall correct predictions.
+# Recall: Decision Tree (23.15%) detects more delayed flights than Logistic Regression (6.54%), but both are low.
+# Precision: Decision Tree (55.69%) has better precision than Logistic Regression (51.77%), meaning fewer false alarms.
+# ROC AUC: Both models barely beat random guessing; Decision Tree (0.5607) is marginally better than Logistic Regression (0.5145).
+# Summary: Decision Tree outperforms Logistic Regression on all metrics but both struggle to reliably predict delays.
+
+# Logistic regression was chosen because it’s easy to implement, interpretable, and performs well as a baseline for binary classification tasks.
+# Decision Tree Classifier was chosen because hey handle non-linear relationships, require little data preprocessing and let you see exactly how decisions are made step-by-step.
+
+# In order to improve the overall evaluation scores we will implement more features into the models and maybe use other tree-based models such as random forest or boosting tht seen to work well
+
+print(df.columns)
+
+#splitting into train and test
+#using the numerical columns that can be undersampled or oversampled
+#We actually run the same random forest with the previous features
+X_new = df[['Year', 'Month', 'DayofMonth', 'DayOfWeek',
+'DepDelay', 'DepartureDelayGroups',
+'WheelsOn', 'TaxiIn',
+'Cancelled', 'Diverted',
+'CRSElapsedTime', 'ActualElapsedTime', 'AirTime',
+'Flights', 'DistanceGroup', 'DivAirportLandings', 'distance_scaled']]
+
+y = df['Delay']
+X_train, X_test, y_train, y_test = train_test_split(X_new, y, train_size=0.8, stratify=y, random_state=42)
+
+# Verifying Stratification in Train-Test Split
+delay_train_pct = (y_train.mean()) * 100
+delay_test_pct = (y_test.mean()) * 100
+print(round(delay_train_pct, 2), "% delay in training data")
+print(round(delay_test_pct, 2), "% delay in testing data")
+
+# This function visualizes the class distribution of the target variable, highlighting any imbalance
+def plot_imbalance(y_count):
+  plt.figure(figsize=(8, 6))
+  splot=sns.barplot(x=["Not Delay","Delay"], y = y_count)
+  for p in splot.patches:
+      splot.annotate(format(p.get_height(), '.0f'), 
+                    (p.get_x() + p.get_width() / 2., p.get_height()), 
+                    ha = 'center', va = 'center', 
+                    size=15,
+                    xytext = (0, -12), 
+                    textcoords = 'offset points')
+  plt.ylabel("Count", size=14)
+  plt.title("Class Imbalance for Target Variable")
+  plt.show()
+
+plot_imbalance(y_train.value_counts());
+
+from imblearn.under_sampling import RandomUnderSampler
+#Performing Undersampling Using RandomUnderSampler
+#Initially we tried oversampling with SMOTE but it took way longer run
+rus = RandomUnderSampler(random_state=44)
+X_train_res_under, y_train_res_under = rus.fit_resample(X_train, y_train.ravel())
+print("X_train_res_under shape:", X_train_res_under.shape)
+print("y_train_res_under shape:", y_train_res_under.shape)
+
+# Verifying Class Balance after undersampling
+counts = np.unique(y_train_res_under, return_counts=True)[1]
+plot_imbalance(counts)
+
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import GridSearchCV
+# Hyperparameter Tuning for Random Forest Using GridSearchCV
+param_grid = {'min_samples_split': [4, 6], 'max_depth': [25,35,45], 'n_estimators': [15,30,45]}
+rf = RandomForestClassifier()
+gs = GridSearchCV(rf, param_grid=param_grid, scoring='roc_auc', cv=3, n_jobs=-1)
+gs.fit(X_train_res_under, y_train_res_under.ravel())
+
+#Training the Best Random Forest Model from Grid Search
+best_params = gs.best_params_
+rf_best = RandomForestClassifier(max_depth=best_params['max_depth'], min_samples_split=best_params['min_samples_split'], n_estimators=best_params['n_estimators'])
+rf_best.fit(X_train_res_under, y_train_res_under.ravel())
+y_pred_rf = rf_best.predict(X_test)
+
+# evaluation scores to analyze the random forest’s performance.
+conf_matrix_rf = confusion_matrix(y_test, y_pred_rf)
+accuracy_rf = accuracy_score(y_test, y_pred_rf)
+recall_rf = recall_score(y_test, y_pred_rf)
+precision_rf = precision_score(y_test, y_pred_rf)
+roc_auc_rf = roc_auc_score(y_test, y_pred_rf)
+rf_df = pd.DataFrame({'Random Forest': [accuracy_rf, recall_rf, precision_rf, roc_auc_rf]}, index=['Accuracy', 'Recall', 'Precision', 'ROC AUC'])
+display(rf_df)
+
+from sklearn.inspection import permutation_importance
+#Computing Feature Importance Using Permutation Importance
+perm_importance = permutation_importance(rf_best, X_train, y_train, random_state=44)
+
+#Sorting Feature Importance Scores
+sorted_idx = np.argsort(perm_importance.importances_mean)
+indices = np.arange(len(sorted_idx))
+
+#Sorting Feature Importance Scores
+sorted_idx = np.argsort(perm_importance.importances_mean)
+indices = np.arange(len(sorted_idx))
+
+#Visualizing Feature Importance Using a Horizontal Bar Plot
+plt.figure(figsize=(10, 12))
+plt.barh(indices, perm_importance.importances_mean[sorted_idx])
+feature_names=X_new.columns
+plt.yticks(indices, np.array(feature_names)[sorted_idx])
+plt.xlabel("Permutation Feature Importance")
+plt.title("Feature Importance - Random Forest")
+plt.xlim(0, max(perm_importance.importances_mean) * 1.1)
+plt.tight_layout()
+plt.show()
+
+#import for boosting adaboost model
+from sklearn.ensemble import AdaBoostClassifier
+from sklearn.model_selection import cross_val_score
+
+#finding best max_depth for adaboost model with decision tree as the base estimator
+depths = range(1, 7)
+cv_scores = []
+import time
+for d in depths:
+    start = time.time()
+    base_tree = DecisionTreeClassifier(max_depth=d)
+    ada = AdaBoostClassifier(estimator=base_tree, n_estimators=30, random_state=42)
+    scores = cross_val_score(ada, X_train, y_train, cv=3, n_jobs=-1)
+    cv_scores.append(scores.mean())
+    print(f"Depth {d} took {time.time() - start:.2f} seconds")
+
+#printing the best max_depth
+best_depth = depths[np.argmax(cv_scores)]
+print(f"Best max_depth: {best_depth}")
+
+#finding the best learning_rate for adaboost model
+learning_rates = [0.3,0.55,0.8]
+cv_scores = []
+
+for lr in learning_rates:
+    start = time.time()
+    ada = AdaBoostClassifier(estimator=DecisionTreeClassifier(max_depth=best_depth), n_estimators=30, learning_rate=lr, random_state=42)
+    scores = cross_val_score(ada, X_train, y_train, cv=3)
+    cv_scores.append(scores.mean())
+    print(f"Learning rate {lr} took {time.time() - start:.2f} seconds")
+
+#printing the best learning_rate
+best_lr = learning_rates[np.argmax(cv_scores)]
+print(f"Best learning rate: {best_lr}")
+
+#fitting data into AdaBoostClassifier with tuned hyperparameters
+ada = AdaBoostClassifier(estimator=DecisionTreeClassifier(max_depth=best_depth), n_estimators=30, learning_rate=best_lr, random_state=42)
+ada.fit(X_train,y_train)
+y_pred_ab=ada.predict(X_test)
+
+# evaluation scores to analyze the AdaBoost’s performance.
+conf_matrix_ab = confusion_matrix(y_test, y_pred_ab)
+accuracy_ab = accuracy_score(y_test, y_pred_ab)
+recall_ab = recall_score(y_test, y_pred_ab)
+precision_ab = precision_score(y_test, y_pred_ab)
+roc_auc_ab = roc_auc_score(y_test, y_pred_ab)
+ab_df = pd.DataFrame({'AdaBoosting': [accuracy_ab, recall_ab, precision_ab, roc_auc_ab]}, index=['Accuracy', 'Recall', 'Precision', 'ROC AUC'])
+display(ab_df)
+
+#merging all the results together
+all_merged_df = pd.concat([merged_df,ab_df,rf_df], axis=1)
+display(all_merged_df)
